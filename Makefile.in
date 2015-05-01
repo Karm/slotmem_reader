@@ -1,0 +1,26 @@
+APXS=@APXS@
+top_srcdir=@top_srcdir@
+srcdir=@srcdir@
+
+APACHE_CFLAGS=@APACHE_CFLAGS@
+APACHE_CPPFLAGS=@APACHE_CPPFLAGS@
+APACHE_LDFLAGS=@APACHE_LDFLAGS@
+
+reader.la: reader.c
+	$(APXS) -c reader.c
+
+install: reader.la
+	$(APXS) -a -i reader.la
+
+clean:
+	rm -f reader.so reader.o reader.slo \
+	    reader.la reader.lo
+	rm -rf .libs
+
+DISTCLEAN_FILES=Makefile config.log config.cache config.status
+distclean: clean
+	rm -f ${DISTCLEAN_FILES}
+
+extraclean: clean
+	rm -f configure ${DISTCLEAN_FILES}
+
