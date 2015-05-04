@@ -14,4 +14,4 @@ Usage
 Notes
 =====
 
-*It still contains ugly platform dependent magic constants, because I still haven't got a full grasp on shm / slotmem structure alignment magic and storing memory tables. WIP.
+ * It still contains ugly platform dependent magic constants, because I still haven't got a full grasp on shm / slotmem structure alignment magic and storing memory tables. WIP.
