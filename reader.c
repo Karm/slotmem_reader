@@ -31,6 +31,19 @@
 #define OFFSET_HOST_TABLE       88
 #define OFFSET_CONTEXT_TABLE    2008
 
+/* originally defined in sharedmem_util.c */
+struct ap_slotmem {
+    char *name;
+    apr_shm_t *shm;
+    int *ident;
+    unsigned int *version;
+    void *base;
+    apr_size_t size;
+    int num;
+    apr_pool_t *globalpool;
+    apr_file_t *global_lock;
+    struct ap_slotmem *next;
+};
 
 void print_node_info(nodeinfo_t* record, char* date) {
         printf("mess.balancer: %s\n", record->mess.balancer);
@@ -114,65 +127,20 @@ char is_empty(void * record, int bytes) {
     }
     return 1;
 }
-struct ap_slotmem {
-    char *name;
-    apr_shm_t *shm;
-    int *ident; /* integer table to process a fast alloc/free */
-    unsigned int *version; /* address of version */
-    void *base;
-    apr_size_t size;
-    int num;
-    apr_pool_t *globalpool;
-    apr_file_t *global_lock; /* file used for the locks */
-    struct ap_slotmem *next;
-};
-int main (int argc, char *argv[]) {
-    FILE *pfile;
-    balancerinfo_t balancer_record;
-    contextinfo_t context_record;
-    domaininfo_t domain_record;
-    hostinfo_t host_record;
-    apr_status_t rv;
-    apr_pool_t *pool;
-    apr_file_t *fp;
-    char date[APR_RFC822_DATE_LEN];
 
-    if (argc < 2) {
-        printf("usage: %s filename\n", argv[0]);
-        return 1;
-    }
-
-    rv = apr_initialize();
-    if (rv != APR_SUCCESS) {
-        printf("APR apr_initialize err");
-        return 1;
-    }
-
-    apr_pool_t *poolX;
-    apr_pool_create(&poolX, NULL);
-
+void process_node(apr_pool_t* pool, apr_file_t* fp, char* date) {
     ap_slotmem_t *slotmem;
-    slotmem = apr_pcalloc(poolX, APR_ALIGN_DEFAULT( sizeof(ap_slotmem_t) ));
+    nodeinfo_t *node_record;
+    slotmem = apr_pcalloc(pool, APR_ALIGN_DEFAULT( sizeof(ap_slotmem_t) ));
     if (!slotmem) {
         printf("APR apr_pcalloc err");
         return 1;
     }
-
-    nodeinfo_t *node_record;
-    node_record = apr_pcalloc(poolX, APR_ALIGN_DEFAULT( sizeof(nodeinfo_t) ));
+    node_record = apr_pcalloc(pool, APR_ALIGN_DEFAULT( sizeof(nodeinfo_t) ));
     if (!node_record) {
         printf("APR apr_pcalloc err");
         return 1;
     }
-
-    apr_pool_create(&pool, NULL);
-    rv = apr_file_open(&fp, argv[1], APR_READ | APR_FOPEN_BINARY, APR_OS_DEFAULT, pool);
-    if (rv != APR_SUCCESS) {
-        printf("Error: Cannot open the file %s\n", argv[1]);
-        return 1;
-    }
-
-
     apr_size_t nbytes = APR_ALIGN_DEFAULT( sizeof(ap_slotmem_t) );
     apr_off_t off = nbytes + APR_ALIGN_DEFAULT( sizeof(int) );
 
@@ -185,6 +153,49 @@ int main (int argc, char *argv[]) {
     printf("size off: %lu\n", off);
 
     nbytes = APR_ALIGN_DEFAULT( sizeof(nodeinfo_t) )/2-40;
+
+    for (;;) {
+        if (apr_file_read(fp, node_record, &nbytes) != APR_SUCCESS || is_empty(node_record, nbytes)) {
+            break;
+        }
+        print_node_info(node_record, date);
+    }
+}
+
+int main (int argc, char *argv[]) {
+    FILE *pfile;
+    balancerinfo_t balancer_record;
+    contextinfo_t context_record;
+    domaininfo_t domain_record;
+    hostinfo_t host_record;
+    apr_status_t rv;
+    apr_pool_t *pool;
+    apr_pool_t *pool_data;
+    apr_file_t *fp;
+    char date[APR_RFC822_DATE_LEN];
+
+    if (argc < 2) {
+        printf("Usage: %s filename\n", argv[0]);
+        return 1;
+    }
+
+    rv = apr_initialize();
+    if (rv != APR_SUCCESS) {
+        printf("APR apr_initialize err");
+        return 1;
+    }
+
+    apr_pool_create(&pool_data, NULL);
+    apr_pool_create(&pool, NULL);
+
+    rv = apr_file_open(&fp, argv[1], APR_READ | APR_FOPEN_BINARY, APR_OS_DEFAULT, pool);
+    if (rv != APR_SUCCESS) {
+        printf("Error: Cannot open the file %s\n", argv[1]);
+        return 1;
+    }
+
+    process_node(pool, fp, date);
+
 //apr_file_read(fp, node_record, &nbytes);
 
 //print_node_info(node_record, date);
@@ -196,15 +207,11 @@ int main (int argc, char *argv[]) {
     //apr_file_seek(fp, APR_SET, &off);
 
 
-for (;;) {
-if (apr_file_read(fp, node_record, &nbytes) != APR_SUCCESS || is_empty(node_record, nbytes)) {
-    break;
-}
-print_node_info(node_record, date);
-}
+
 
     apr_file_close(fp);
     apr_pool_destroy(pool);
+    apr_pool_destroy(pool_data);
     apr_terminate();
 
 /*
