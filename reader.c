@@ -24,12 +24,12 @@
 #define DOMAIN_TABLE   "domain.domain.slotmem"
 #define HOST_TABLE     "manager.host.hosts.slotmem"
 
-// Magic constant :-( Got from Hexa editor Bless
-#define OFFSET_NODE_TABLE       88
-#define OFFSET_BALANCER_TABLE   88
-#define OFFSET_DOMAIN_TABLE     88
-#define OFFSET_HOST_TABLE       88
-#define OFFSET_CONTEXT_TABLE    2008
+#define POSSIBLE_BLOCKS 2
+#define CMP_BLOCK_SIZE  7
+const unsigned char possible_ends_of_alignmnet_blocks[POSSIBLE_BLOCKS][CMP_BLOCK_SIZE] = {
+    { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }
+};
 
 /* originally defined in sharedmem_util.c */
 struct ap_slotmem {
@@ -122,35 +122,72 @@ char is_empty(void * record, int bytes) {
     char * brec = (char*)record;
     while( bytes-- ) {
         if( *brec++ ) {
-            return 0;
+            return FALSE;
         }
+    }
+    return TRUE;
+}
+
+apr_status_t is_end_of_alignment_block(char *a){
+    a++;
+    for(int i = 0; i < POSSIBLE_BLOCKS; i++) {
+        if(memcmp(a, possible_ends_of_alignmnet_blocks[i], sizeof possible_ends_of_alignmnet_blocks[i]) == 0) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+char Xis_end_of_alignment_block(char *a){
+    //a[0] last byte of previous block
+    if( (a[1] != 0x0 && a[1] != 0x01)) {
+        printf("FALSE a[1]:%x\n",a[1]);
+        return 0;
+    }
+    if( a[2] != 0x0 ||
+        a[3] != 0x0 ||
+        a[4] != 0x0 ||
+        a[5] != 0x0 ||
+        a[6] != 0x0 ||
+        a[7] != 0x0) {
+        //printf("FALSE %x %x %x %x %x %x\n",a[2], a[3], a[4], a[5], a[6], a[7]);
+       return 0;
     }
     return 1;
 }
 
-void process_node(apr_pool_t* pool, apr_file_t* fp, char* date) {
+apr_status_t eat_all_alignment_blocks(apr_file_t* fp){
+    apr_size_t s_alignment = 8*sizeof(char);
+    char alignment[8];
+    for (;;) {
+        if (apr_file_read(fp, &alignment, &s_alignment) != APR_SUCCESS) {
+            printf("Alignment block reading error.");
+            return APR_EGENERAL;
+        }
+        if(is_end_of_alignment_block(alignment)) {
+            break;
+        }
+    }
+    return APR_SUCCESS;
+}
+
+apr_status_t process_node(apr_pool_t* pool, apr_file_t* fp, char* date) {
     ap_slotmem_t *slotmem;
     nodeinfo_t *node_record;
     slotmem = apr_pcalloc(pool, APR_ALIGN_DEFAULT( sizeof(ap_slotmem_t) ));
     if (!slotmem) {
         printf("APR apr_pcalloc err");
-        return 1;
+        return APR_EGENERAL;
     }
     node_record = apr_pcalloc(pool, APR_ALIGN_DEFAULT( sizeof(nodeinfo_t) ));
     if (!node_record) {
         printf("APR apr_pcalloc err");
-        return 1;
+        return APR_EGENERAL;
     }
     apr_size_t nbytes = APR_ALIGN_DEFAULT( sizeof(ap_slotmem_t) );
-    apr_off_t off = nbytes + APR_ALIGN_DEFAULT( sizeof(int) );
 
     apr_file_read(fp, slotmem, &nbytes);
-    apr_file_seek(fp, APR_SET, &off);
 
-    printf("size ap_slotmem_t: %lu\n", APR_ALIGN_DEFAULT( sizeof(ap_slotmem_t) ));
-    printf("size nodeinfo_t: %lu\n", APR_ALIGN_DEFAULT( sizeof(nodeinfo_t) ));
-    printf("size nbytes: %lu\n", nbytes);
-    printf("size off: %lu\n", off);
+    eat_all_alignment_blocks(fp);
 
     nbytes = APR_ALIGN_DEFAULT( sizeof(nodeinfo_t) )/2-40;
 
@@ -160,11 +197,40 @@ void process_node(apr_pool_t* pool, apr_file_t* fp, char* date) {
         }
         print_node_info(node_record, date);
     }
+    return APR_SUCCESS;
+}
+
+apr_status_t process_balancer(apr_pool_t* pool, apr_file_t* fp, char* date) {
+    ap_slotmem_t *slotmem;
+    balancerinfo_t *balancer_record;
+    slotmem = apr_pcalloc(pool, APR_ALIGN_DEFAULT( sizeof(ap_slotmem_t) ));
+    if (!slotmem) {
+        printf("APR apr_pcalloc err");
+        return APR_EGENERAL;
+    }
+    balancer_record = apr_pcalloc(pool, APR_ALIGN_DEFAULT( sizeof(balancerinfo_t) ));
+    if (!balancer_record) {
+        printf("APR apr_pcalloc err");
+        return APR_EGENERAL;
+    }
+    apr_size_t nbytes = APR_ALIGN_DEFAULT( sizeof(ap_slotmem_t) );
+
+    apr_file_read(fp, slotmem, &nbytes);
+
+    eat_all_alignment_blocks(fp);
+
+    nbytes = APR_ALIGN_DEFAULT( sizeof(balancerinfo_t) );
+
+    for (;;) {
+        if (apr_file_read(fp, balancer_record, &nbytes) != APR_SUCCESS || is_empty(balancer_record, nbytes)) {
+            break;
+        }
+        print_balancer_info(balancer_record, date);
+    }
+    return APR_SUCCESS;
 }
 
 int main (int argc, char *argv[]) {
-    FILE *pfile;
-    balancerinfo_t balancer_record;
     contextinfo_t context_record;
     domaininfo_t domain_record;
     hostinfo_t host_record;
@@ -194,71 +260,41 @@ int main (int argc, char *argv[]) {
         return 1;
     }
 
-    process_node(pool, fp, date);
-
-//apr_file_read(fp, node_record, &nbytes);
-
-//print_node_info(node_record, date);
-
-//printf("size nbytes: %lu\n", nbytes);
-//printf("size off: %lu\n", off);
-
-    //off = off + nbytes;
-    //apr_file_seek(fp, APR_SET, &off);
-
-
-
-
-    apr_file_close(fp);
-    apr_pool_destroy(pool);
-    apr_pool_destroy(pool_data);
-    apr_terminate();
-
-/*
-    return 0;
-
     if(strstr(argv[1], NODE_TABLE) != NULL) {
-        //fseek(pfile, OFFSET_NODE_TABLE, SEEK_SET);
-        while (fread(&node_record, APR_ALIGN_DEFAULT( sizeof(nodeinfo_t) ), 1, pfile) == 1 ) {
-            if (!is_empty(&node_record, APR_ALIGN_DEFAULT( sizeof(nodeinfo_t) ))) {
-                print_node_info(node_record, date);
-            }
-        }
+        process_node(pool, fp, date);
     } else if(strstr(argv[1], BALANCER_TABLE) != NULL) {
-        fseek(pfile, OFFSET_BALANCER_TABLE, SEEK_SET);
-        while (fread(&balancer_record, APR_ALIGN_DEFAULT( sizeof(balancerinfo_t) ), 1, pfile) == 1 ) {
-            if (!is_empty(&balancer_record, APR_ALIGN_DEFAULT( sizeof(balancerinfo_t) ))) {
-                print_balancer_info(balancer_record, date);
-            }
-        }
+        process_balancer(pool, fp, date);
     } else if(strstr(argv[1], CONTEXT_TABLE) != NULL) {
-        while (fread(&context_record, APR_ALIGN_DEFAULT( sizeof(contextinfo_t) ), 1, pfile) == 1 ) {
+        /*while (fread(&context_record, APR_ALIGN_DEFAULT( sizeof(contextinfo_t) ), 1, pfile) == 1 ) {
             fseek(pfile, OFFSET_CONTEXT_TABLE, SEEK_SET);
             if (!is_empty(&context_record, APR_ALIGN_DEFAULT( sizeof(contextinfo_t) ))) {
                 print_context_info(context_record, date);
             }
-        }
+        }*/
     } else if(strstr(argv[1], DOMAIN_TABLE) != NULL) {
-        fseek(pfile, OFFSET_DOMAIN_TABLE, SEEK_SET);
+        /*fseek(pfile, OFFSET_DOMAIN_TABLE, SEEK_SET);
         while (fread(&domain_record, APR_ALIGN_DEFAULT( sizeof(domaininfo_t) ), 1, pfile) == 1 ) {
             if (!is_empty(&domain_record, APR_ALIGN_DEFAULT( sizeof(domaininfo_t) ))) {
                 print_domain_info(domain_record, date);
             }
-        }
+        }*/
     } else if(strstr(argv[1], HOST_TABLE) != NULL) {
-        fseek(pfile, OFFSET_HOST_TABLE, SEEK_SET);
+        /*fseek(pfile, OFFSET_HOST_TABLE, SEEK_SET);
         while (fread(&host_record, APR_ALIGN_DEFAULT( sizeof(hostinfo_t) ), 1, pfile) == 1 ) {
             if (!is_empty(&host_record, APR_ALIGN_DEFAULT( sizeof(hostinfo_t) ))) {
                 print_host_info(host_record, date);
             }
-        }
+        }*/
     } else {
         printf("Error: Expected one of %s, %s, %s, %s, %s in %s.\n",
             NODE_TABLE, BALANCER_TABLE, CONTEXT_TABLE, DOMAIN_TABLE, HOST_TABLE, argv[0]);
         return 1;
     }
 
-    fclose(pfile);
-    */
+    apr_file_close(fp);
+    apr_pool_destroy(pool);
+    apr_pool_destroy(pool_data);
+    apr_terminate();
+
     return 0;
 }
