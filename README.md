@@ -11,3 +11,7 @@ Usage
 
     ./reader  HTTPD_ROOT/cache/mod_cluster/manager.host.hosts.slotmem
 
+Supported versions
+==================
+
+Please, note that this utility compiles and works with mod_cluster 1.2.x and 1.3.x.
