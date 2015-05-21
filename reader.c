@@ -141,17 +141,24 @@ apr_status_t is_empty(void * record, int bytes) {
   */
 apr_status_t is_end_of_alignment_block(apr_file_t* fp, char *a){
     a++; // Skip the first, it's the last of the previous struc.
+    // The end of the filled block ends with the start of a data structure
     char peep_at_one;
-    apr_size_t peep_at_one_s = sizeof(char);
-    apr_off_t offset = - sizeof(char);
+    // The second byte of any of the data structures, but for empty cases, is not 0x00
+    char peep_at_two;
+    apr_size_t peep_at_s = sizeof(char);
+    apr_off_t offset = - 2*sizeof(char);
     for(int i = 0; i < POSSIBLE_BLOCKS; i++) {
         if(memcmp(a, possible_ends_of_alignmnet_blocks[i], sizeof(possible_ends_of_alignmnet_blocks[i])) == 0) {
-            if (apr_file_read(fp, &peep_at_one, &peep_at_one_s) != APR_SUCCESS) {
+            if (apr_file_read(fp, &peep_at_one, &peep_at_s) != APR_SUCCESS) {
                 // File full of zeroes...
                 return FALSE;
             }
+            if (apr_file_read(fp, &peep_at_two, &peep_at_s) != APR_SUCCESS) {
+                // File full of zeroes or weirdly corrupted
+                return FALSE;
+            }
             apr_file_seek(fp, APR_CUR, &offset);
-            if (peep_at_one != 0x00) {
+            if (peep_at_one != 0x00 && peep_at_two != 0x00) {
                 return TRUE;
             }
         }
